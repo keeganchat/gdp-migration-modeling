@@ -1,0 +1,653 @@
+---
+title: "Regression Project Markdown"
+author: "Kathryn Saunders & Keegan Chatham"
+date: "2025-02-24"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(tinytex)
+library(readxl)
+library(ggplot2)
+library(car)
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(out.width = "60%",fig.align="center")
+```
+
+migration data
+https://www.pewresearch.org/dataset/dataset-religious-composition-of-the-worlds-migrants-1990-2020/
+
+gdp data
+https://data.worldbank.org/indicator/NY.GDP.MKTP.CD
+
+population data
+https://data.worldbank.org/indicator/SP.POP.TOTL
+
+## Assorted Wrangling (everything done before the project proposal)
+
+```{r}
+
+#read main data
+migration <- read_excel("~/RStudio/PROJECT/Incoming_and_Outgoing_Migrant_Counts.xlsx")
+view(migration)
+
+#fix column issues
+colnames(migration) <- c("direction", "year", "country", "religion", "count",
+                         "percent", "region", "level", "countrycode")
+
+migration2 <- migration[-1,]
+
+#fix variable types
+migration3 <- migration2 %>%
+  mutate(direction = as.factor(direction),
+         year=as.numeric(year),
+         country=as.factor(country),
+         religion=as.factor(religion),
+         count=as.numeric(count),
+         percent=as.integer(percent),
+         region=as.factor(region),
+         level=as.numeric(level),
+         countrycode=as.numeric(countrycode))
+
+#NOTE: Everywhere that count says 10,000 used to be < 10,000
+migration3["count"][is.na(migration3["count"])] <- 10000
+
+
+
+# IF IT WORKS WITH THESE COMMENTED OUT THEN DELETE THEM - DONE LATER
+# gdp_simple2 <- read_excel("~/RStudio/PROJECT/GDPbyCountry_1990-2020.xls")
+# 
+# country_continents <- read_csv("~/RStudio/PROJECT/Countries-Continents.csv")
+# population <- read_excel("~/RStudio/PROJECT/population2.xls")
+# 
+# cont_pop <- country_continents %>%
+#   left_join(population, by= c("Country"="Country Name"))
+# 
+# 
+
+
+#split into migration in and migration out then remerge for net migration
+country_migration <- migration3 %>%
+  filter(level==1) 
+
+out_migration <- country_migration %>%
+  filter(direction == "Outgoing") %>%
+  rename(percent_out = percent, count_out = count)
+
+out_migration2 <- out_migration[,-1]
+
+in_migration <- country_migration %>%
+  filter(direction == "Incoming") %>%
+  rename(percent_in = percent, count_in = count)
+
+in_migration2 <- in_migration[,-1]
+
+net_migration <- in_migration2 %>%
+  left_join(out_migration2, by=c("year", "country", "religion", "region", "level", "countrycode")) %>%
+  mutate(net_migration = count_in - count_out)
+
+
+
+#random sample from net_migration
+set.seed(1234)
+rows <- sample(x=1:nrow(net_migration),
+               size=8000,
+               replace=FALSE)
+
+random_migration <- net_migration[rows,]
+
+
+#select only majority religion
+net_religion <- random_migration %>%
+  filter(percent_in != 100) %>%
+  group_by(country) %>%
+  arrange(desc(percent_in)) %>%
+  summarize(maj_religion=max(percent_in))
+
+#add back to main dataframe
+religion_migration <- random_migration %>%
+  left_join(net_religion, by="country")
+
+#select only the rows with the majority religion
+religion_mig2 <- religion_migration %>%
+  filter(percent_in==maj_religion)
+
+#get rid of useless columns
+religion_mig3 <- religion_mig2[,-c(7,8,12)]
+
+
+#HAVE TO MERGE GDP AND POPULATION
+  
+
+#read gdp file
+gdp <- read_excel("~/RStudio/PROJECT/GDPbyCountry_1990-2020.xls")
+
+#switch rows and columns
+gdp_long <- gdp %>%
+  pivot_longer(cols = -1, names_to = "years", values_to = "gdp") %>%
+  mutate(years=as.numeric(years))
+
+#add to main data
+religion_mig4 <- religion_mig3 %>%
+  left_join(gdp_long, by=c("country" = "Country Name", "year" = "years")) %>%
+  na.omit()
+
+#read total population file (not migration)
+population <- read_excel("~/RStudio/PROJECT/population2.xls")
+
+#get rid of useless columns
+pop2 <- population[,-c(2:4)]
+
+#switch rows and columns
+pop_long <- pop2 %>%
+  pivot_longer(cols = -1, names_to = "years", values_to = "population") %>%
+  mutate(years=as.numeric(years))
+
+#add to main data
+religion_mig5 <- religion_mig4 %>%
+  left_join(pop_long, by=c("country" = "Country Name", "year" = "years")) %>%
+  na.omit()
+
+```
+
+
+```{r, making it linear}
+numeric_only <- religion_mig5[,-c(2,3,6)]
+plot(numeric_only)
+
+linear06 <- numeric_only %>% 
+  transmute(year, loggdp = log(gdp), logcountin = log(count_in), 
+            logperin = log(percent_in), logcountout = log(count_out), 
+            logperout = log(percent_out), net_migration, 
+            logpop = log(population))
+
+#it looks so much better
+plot(linear06)
+
+
+#log model is more significant in everything than the non-log model
+non_linearmodel01 <- lm(gdp~., data=numeric_only)
+summary(non_linearmodel01)
+
+linearmodel01 <- lm(loggdp~., data=linear06)
+summary(linearmodel01)
+
+vif(linearmodel01)
+
+#adding the qualitative variables back in
+linear07 <- religion_mig5 %>% 
+  transmute(year, country, religion, region, loggdp = log(gdp), logcountin = log(count_in), 
+            logperin = log(percent_in), logcountout = log(count_out), 
+            logperout = log(percent_out), net_migration, 
+            logpop = log(population))
+
+
+```
+
+
+```{r, collinearity problems take 2}
+# removing count_out because of high vif score and low significance
+
+categorical_tests <- religion_mig5[, -c(1,4,5,7,8,9,11)]
+
+catmod01 <- lm(gdp~., data=categorical_tests)
+summary(catmod01)
+
+#definitely can not have both religion and country
+#vif(catmod01)
+#alias(catmod01)
+
+#removed country
+linear08 <- religion_mig5 %>% 
+  transmute(year, religion, region, loggdp = log(gdp), logcountin = log(count_in), 
+            logperin = log(percent_in), logcountout = log(count_out), 
+            logperout = log(percent_out), net_migration, 
+            logpop = log(population))
+
+mod02 <- lm(loggdp~., data=linear08)
+summary(mod02)
+
+
+#the religiously unaffiliated countries are just China, Japan, and Sweden
+#only unaffiliated religion is significant so I'm making an indicator variable
+
+linear09 <- religion_mig5 %>%
+    transmute(year, country, unaffiliated = ifelse(religion == "Unaffiliated", 1, 0), 
+              region, loggdp = log(gdp), logcountin = log(count_in), 
+              logperin = log(percent_in), logcountout = log(count_out), 
+             logperout = log(percent_out), net_migration, 
+             logpop = log(population))
+  
+
+#country is still ruining religion and region so lets see which is more accurate
+mod03 <- lm(loggdp~., data=linear09)
+summary(mod03)  
+
+#NOTE: everything except net_migration is highly significant, RSE = 0.8246, R^2 = 0.8904
+#has religion and region
+no_country <- linear09 %>%
+  select(-country)
+
+mod04 <- lm(loggdp~., data=no_country)
+summary(mod04) 
+
+#better without useless net_mig - RSE = 0.8244 , R^2 = 0.8905 
+no_country2 <- no_country[,-9]
+mod04_5 <- lm(loggdp~., data=no_country2)
+summary(mod04_5)
+
+#really only some of the countries and logpop are significant, RSE = 0.3586, R^2 = 0.979
+# has country but not religion or region
+# HAS OVERFITTING ISSUES
+yes_country <- linear09 %>%
+  select(-unaffiliated, -region)
+
+mod05 <- lm(loggdp~., data=yes_country)
+summary(mod05) 
+
+
+```
+
+
+# NOTE - WORRIED ABOUT OVERFITTING THE SECOND MODEL - TRY SOME SHIT
+
+```{r, no country RMSE - does work better option}
+#randomly select rows from sample data
+set.seed(123)
+no_rows <- sample(x=1:nrow(no_country),size=floor(0.75*nrow(no_country)),replace=FALSE)
+
+
+#split sample into training and testing
+no_training <- no_country[no_rows,]
+no_testing <- no_country[-no_rows,]
+
+#check
+mean(no_training$loggdp)
+mean(no_testing$loggdp)
+
+#compute RMSE for null model - 2.679811
+no_testing %>%
+  summarize(RMSE=sqrt(mean((loggdp-22.99685)^2)))
+
+
+#estimate simple linear regression model
+mod06 <- lm(loggdp~., data=no_training)
+
+#estimate accuracy of model - 0.7480504
+no_testing %>%
+  mutate(pred_gdp=predict(mod06,newdata=no_testing)) %>%
+  summarize(RMSE=sqrt(mean((loggdp-pred_gdp)^2)))
+
+```
+
+
+```{r, yes country rmse - doesn't work}
+#randomly select rows from sample data
+set.seed(123)
+yes_rows <- sample(x=1:nrow(yes_country),size=floor(0.75*nrow(yes_country)),replace=FALSE)
+
+
+#split sample into training and testing
+yes_training <- yes_country[yes_rows,]
+yes_testing <- yes_country[-yes_rows,]
+
+#check
+mean(yes_training$loggdp)
+mean(yes_testing$loggdp)
+
+#compute RMSE for null model - 2.679811
+yes_testing %>%
+  summarize(RMSE=sqrt(mean((loggdp-22.99685)^2)))
+
+
+#estimate simple linear regression model
+mod07 <- lm(loggdp~., data=yes_training)
+
+#estimate accuracy of model
+yes_testing %>%
+  mutate(pred_gdp_yes=predict(mod07,newdata=yes_testing)) %>%
+  summarize(RMSE=sqrt(mean((loggdp-pred_gdp_yes)^2)))
+
+## last bit won't run because the testing data is intriducing new countries it hasn't seen before
+
+```
+
+## conclusion: use region and religion, don't use country
+
+
+# basic min max stuff for methods section
+
+```{r, for methods section table}
+
+methods01 <- no_country2[, c(4,5,7,9)]
+
+min(methods01$loggdp)
+max(methods01$loggdp)
+median(methods01$loggdp)
+
+min(methods01$logpop)
+max(methods01$logpop)
+median(methods01$logpop)
+
+min(methods01$logcountin)
+max(methods01$logcountin)
+median(methods01$logcountin)
+
+min(methods01$logcountout)
+max(methods01$logcountout)
+median(methods01$logcountout)
+
+```
+
+# graphics for exploratory section
+
+```{r, exploratory graphics}
+#The first graphic must display the distribution of the response variable.
+graph1 <- ggplot(no_country2, aes(loggdp)) + geom_histogram(color="black",fill="#CF887C") + 
+  theme_bw() +
+  labs(x = "The Log of GDP (Current USD)",
+       y = "Count",
+       title = "GDP Distribution",
+       subtitle = "Figure 1")
+graph1
+
+ggsave("Stat3400_ProjGraphic1.jpg", plot = graph1, width = 8, height = 6, units = "in", dpi = 300)
+
+#The second graphic must display the distribution of one important predictor.
+graph2 <- ggplot(no_country2, aes(logcountin)) + geom_histogram(color="black",fill="#CF887C", bins=20) + theme_bw() +
+  labs(x = "The Log of the Number of Incoming Migrants",
+       y = "Count",
+       title = "Distribution of the Number of Immigrants",
+       subtitle = "Figure 2")
+graph2
+
+ggsave("Stat3400_ProjGraphic2.jpg", plot = graph2, width = 8, height = 6, units = "in", dpi = 300)
+
+#The third graphic must display the association between the response and predictor.
+graph3 <- ggplot(no_country2, aes(x=logcountin, y=loggdp)) + geom_point() + 
+  geom_jitter(width=0.1,height=0,alpha=0.5) + theme_bw() +
+  geom_smooth(method="lm",formula=y~x, se=FALSE, color="#E75A50") +
+  labs(x = "The Log of the Number of Incoming Migrants",
+       y = "The Log of GDP (Current USD)",
+       title = "Immigration Patterns in GDP",
+       subtitle = "Figure 3")
+
+ggsave("Stat3400_ProjGraphic3.jpg", plot = graph3, width = 8, height = 6, units = "in", dpi = 300)
+
+
+#The fourth graphic can display any distribution or association you find interesting.
+graph4 <- ggplot(no_country2, aes(x=region, y=loggdp)) + geom_boxplot(color="black",fill="#CF887C") + 
+  theme_bw() + theme(axis.text.x = element_text(angle = 20, hjust = 1, vjust = 1)) +
+  labs(x = "Region",
+       y = "The Log of GDP (Current USD)",
+       title = "GDP by World Region",
+       subtitle = "Figure 4")
+graph4
+
+ggsave("Stat3400_ProjGraphic4.jpg", plot = graph4, width = 8, height = 6, units = "in", dpi = 300)
+
+
+regions <- no_country2 %>%
+  filter(region=="Middle East-North Africa")
+median(regions$loggdp)
+
+
+#AP 21.99
+#E 23.82
+#LAC 22.29
+#MENA 24.609
+#NA 25.204
+#SSA 22.51
+```
+
+
+
+
+
+# PREDICITVE ANALYSIS SECTION - USE NO_COUNTRY2 AS THE STARTING DATA SET BC I DONT WANT TO FIGURE THAT OUT AGAIN
+
+```{r, diagnostic plot}
+#fit linear regression model
+diagnostic_model <- lm(loggdp~.,data=no_country2)
+
+#display first diagnostic plot
+jpeg('diagnostic.jpg', width = 8, height = 6, units = "in", res=300)
+plot(diagnostic_model,which=1)
+
+
+
+```
+
+```{r, stepwise variable selection}
+glimpse(no_country2)
+
+library(olsrr)
+
+step_model01 <- lm(loggdp~., data=no_country2)
+
+forward_model01 <- ols_step_forward_adj_r2(step_model01)
+
+forward_model01$metrics
+
+backward_model01 <- ols_step_backward_adj_r2(step_model01)
+
+backward_model01$metrics
+
+#all of the 8 variables both ways, what a surprise.
+
+#construct data frame
+forward_results <- data.frame(vars=seq(0,8,1),
+                              adjR=c(0,forward_model01$metrics$adj_r2))
+
+#plot forward stepwise results
+graph6 <- ggplot(data=forward_results,
+       mapping=aes(x=vars,y=adjR)) +
+  geom_line(color="#E75A50", size=1) +
+  geom_hline(yintercept=max(forward_results$adjR),
+             color="black",linetype="dashed") +
+  labs(title="Forward Stepwise Selection",
+       x="Number of Predictors",
+       y="Adjusted R-Squared",
+       subtitle = "Figure 6") +
+  scale_x_continuous(limits=c(0,10),breaks=seq(0,10,1)) +
+  theme_bw()
+
+graph6
+
+ggsave("Stat3400_ProjGraphic6.jpg", plot = graph6, width = 8, height = 6, units = "in", dpi = 300)
+
+
+```
+
+```{r, cross validation - GRAPHIC?}
+library(boot)
+
+#null model
+null_rmse <- sqrt(mean((no_country2$loggdp-22.95574)^2))
+null_rmse
+
+#LOOCV cross-validation
+loocv_model <- glm(loggdp~., data=no_country2, family="gaussian")
+
+loocv <- cv.glm(data=no_country2,glmfit=loocv_model,K=nrow(no_country2))
+
+mse <- loocv$delta[1]
+
+sqrt(mse)
+
+#5-fold CV
+set.seed(303)
+five_cv <- cv.glm(data=no_country2,glmfit=loocv_model,K=5)
+
+#extract RMSE
+sqrt(five_cv$delta[1])
+
+#null RMSE is 2.487708
+#LOOCV RMSE is 0.85437
+#5-fold CV RMSE is 0.8331947 - lower so might use this lol
+
+#comparing RMSE or R-squared of different model options - null, best linear model with no log, best with log
+```
+
+```{r, cv part 2}
+complinear <- no_country2 %>%
+  transmute(year, unaffiliated, region, loggdp, countin = exp(logcountin),
+            perin = exp(logperin), countout = exp(logcountout), 
+            perout = exp(logperout), pop = exp(logpop))
+
+compnull_rmse <- sqrt(mean((complinear$loggdp-22.95574)^2))
+compnull_rmse
+
+#okay same null - good
+
+comp_model <- glm(loggdp~., data=complinear, family="gaussian")
+summary(comp_model)
+
+
+#5-fold CV
+set.seed(303)
+compfive_cv <- cv.glm(data=complinear,glmfit=comp_model,K=5)
+
+#extract RMSE
+sqrt(compfive_cv$delta[1])
+
+#1.82688 - RMSE of 5-fold CV with non-logged variables
+
+```
+
+```{r, cv graphic}
+
+cv_graph <- data.frame(
+  cv = c("Null Model", "Non-Linearized Model", "Linearized Model"),
+  rmse = c(2.487708, 1.82688, 0.8331947))
+
+graph7 <- ggplot(cv_graph, aes(x=cv, y=rmse)) + geom_histogram(stat = "identity",fill="#CF887C") +
+  theme_bw() + labs(
+    title = "5-Fold Cross Validation Error",
+    subtitle = "Figure 7",
+    x = "Model",
+    y = "Root Mean Squared Error")
+
+graph7
+
+ggsave("Stat3400_ProjGraphic7.jpg", plot = graph7, width = 8, height = 6, units = "in", dpi = 300)
+
+
+```
+
+
+## fourth interesting thing
+```{r}
+step_model01 <- lm(loggdp~., data=no_country2)
+
+no_country3 <- no_country2 %>%
+  mutate(predicted = predict(step_model01))
+
+graph8 <- ggplot(no_country3, aes(x = predicted, y = loggdp)) +
+  geom_point(position="jitter", alpha=0.5) + geom_jitter(width=0.1,height=0,alpha=0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "#E75A50") +
+  labs(title = "Actual vs Predicted Values of the Log of GDP",
+       subtitle = "Figure 8",
+       x = "Predicted Values",
+       y = "Actual Values") +
+  theme_bw()
+
+graph8
+
+ggsave("Stat3400_ProjGraphic8.jpg", plot = graph8, width = 8, height = 6, units = "in", dpi = 300)
+
+```
+
+
+
+
+
+# DISCUSSION TABLE
+```{r}
+# Adjusted R^2 - 0 versus 0.891
+# RSS - 2.491 versus 0.8244
+# ANOVA P-VALUE - NA versus 2.2e-16
+
+null_model <- lm(loggdp~1, data=no_country2)
+summary(null_model)
+
+discussion_model <- lm(loggdp~., data=no_country2)
+summary(discussion_model)
+
+
+# CROSS VALIDATED ERROR (from above) - 2.488 versus 0.833
+
+
+```
+
+
+
+
+
+
+
+
+
+## ignore these two sections
+
+```{r, multicollinearity - OLD IGNORE, include=FALSE}
+#very much a mess
+model0 <-lm(gdp~., data=religion_mig5)
+summary(model0)
+
+#trying to figure out whether percent in/out or count in/out is better (multicollinearity)
+numeric_only <- religion_mig5[,-c(2,3,6)]
+
+model01 <- lm(gdp~., data=numeric_only)
+summary(model01)
+
+#count_in is better than percent_in so lets just use that
+#having both count_in and count_out is giving multicollinearity errors with net migration so I'm removing count_out
+
+religion_mig6 <- religion_mig5[,-c(2,5, 7,8)]
+model03 <- lm(gdp~., data=religion_mig6)
+summary(model03)
+vif(model03)
+alias(model03)
+
+#update having count_in and count_out are also having mutlicollinearity issues, going down to just count_in
+religion_mig7 <- religion_mig5[,-c(2,5,7,8,9)]
+model04 <- lm(gdp~., data=religion_mig7)
+summary(model04)
+vif(model04)
+alias(model04)
+#THE VIFs ARE FINALLY BELOW 5
+
+
+#nevermind putting country back in brought the alias error back
+religion_mig8 <-religion_mig5[,-c(2,5,7,8,9)]
+model05 <- lm(gdp~., data=religion_mig8)
+summary(model05)
+vif(model05)
+alias(model05)
+
+
+```
+
+```{r, ignore this, include=FALSE}
+numeric_only2 <- religion_mig8[,-c(2,4)]
+plot(numeric_only2)
+
+log_numeric <- numeric_only2 %>%
+  mutate(loggdp = log(gdp), logpop = log(population), logcount = log(count_in))
+
+plot(log_numeric)
+
+```
+
+
+
+
+
+
+
