@@ -8,7 +8,7 @@ This project investigates the relationship between global migration patterns and
 * Log-transformed skewed variables to meet linearity assumptions
 * Used forward stepwise variable selection to identify the best 8-variable model
 * Evaluated model performance using 5-fold cross-validation and RMSE
-* Achieved an adjusted $R^2$ of $0.891$, nearly 300% improvement over the null model
+* Achieved an adjusted $R^2$ of 0.891, nearly 300% improvement over the null model
 
 ## Tools & Concepts
 R, tidyverse, ggplot2, broom, olsrr, boot — multiple linear regression, stepwise variable selection, cross-validation
