@@ -3,6 +3,11 @@
 ## Overview
 This project investigates the relationship between global migration patterns and GDP using regression analysis. Using data from the Pew Research Center and the World Bank Group, we built a predictive model for GDP incorporating population, migration, religion, and regional variables.
 
+## Data Sources
+* Migration data: [Pew Research Center](https://www.pewresearch.org/dataset/dataset-religious-composition-of-the-worlds-migrants-1990-2020/)
+* GDP Data [World Bank Group](https://data.worldbank.org/indicator/NY.GDP.MKTP.CD)
+* Population Data [World Bank Group](https://data.worldbank.org/indicator/SP.POP.TOTL)
+
 ## Methods
 * Wrangled and cleaned a dataset of 390 observations sampled from 12,000+ records spanning 1990–2020
 * Log-transformed skewed variables to meet linearity assumptions
